@@ -193,7 +193,7 @@ std::string dfxml_writer::xmlmap(const dfxml_writer::strstrmap_t &m,const std::s
 
 
 /* This goes to stdout */
-dfxml_writer::dfxml_writer():M(),outf(),out(&cout),tags(),tag_stack(),tempfilename(),tempfile_template("/tmp/xml_XXXXXXXX"),
+dfxml_writer::dfxml_writer():M(),out_fd(-1),out_stream(),out(&cout),tags(),tag_stack(),tempfilename(),tempfile_template("/tmp/xml_XXXXXXXX"),
            t0(),t_last_timestamp(),make_dtd(false),outfilename(),oneline()
 {
 #ifdef HAVE_PTHREAD
@@ -206,18 +206,19 @@ dfxml_writer::dfxml_writer():M(),outf(),out(&cout),tags(),tag_stack(),tempfilena
 
 /* This should be rewritten so that the temp file is done on close, not on open */
 dfxml_writer::dfxml_writer(const std::string &outfilename_,bool makeDTD):
-    M(),outf(outfilename_.c_str(),ios_base::out),
-    out(),tags(),tag_stack(),tempfilename(),tempfile_template(outfilename_+"_tmp_XXXXXXXX"),
+    M(),out_fd(-1),out_stream(),out(),tags(),tag_stack(),tempfilename(),tempfile_template(outfilename_+"_tmp_XXXXXXXX"),
     t0(),t_last_timestamp(),make_dtd(false),outfilename(outfilename_),oneline()
 {
     MUTEX_INIT(&M);
     gettimeofday(&t0,0);
     gettimeofday(&t_last_timestamp,0);
-    if(!outf.is_open()){
+    out_fd = be13::open_no_symlink(outfilename_.c_str(), O_WRONLY|O_CREAT|O_TRUNC|O_BINARY, 0666);
+    if(out_fd<0){
         perror(outfilename_.c_str());
         exit(1);
     }
-    out = &outf;                                                // use this one instead
+    out_stream.reset(new be13::fdostream(out_fd));
+    out = out_stream.get();
     *out << xml_header;
 }
 
@@ -233,38 +234,13 @@ void dfxml_writer::set_tempfile_template(const std::string &temp)
 void dfxml_writer::close()
 {
     MUTEX_LOCK(&M);
-    outf.close();
-    if(make_dtd){
-        /* If we are making the DTD, then we should close the file,
-         * scan the output file for the tags, write to a temp file, and then
-         * close the temp file and have it overwrite the outfile.
-         */
-
-        std::ifstream in(cstr(tempfilename));
-        if(!in.is_open()){
-            cerr << tempfilename << strerror(errno) << ":Cannot re-open for input\n";
-            exit(1);
-        }
-        outf.open(cstr(outfilename),ios_base::out);
-        if(!outf.is_open()){
-            cerr << outfilename << " " << strerror(errno)
-                 << ": Cannot open for output; will not delete " << tempfilename << "\n";
-            exit(1);
-        }
-        // copy over first line --- the XML header
-        std::string line;
-        getline(in,line);
-        outf << line;
-
-        write_dtd();                    // write the DTD
-        while(!in.eof()){
-            getline(in,line);
-            outf << line << endl;
-        }
-        in.close();
-        unlink(cstr(tempfilename));
-        outf.close();
+    if(out) out->flush();
+    out_stream.reset();
+    if(out_fd>=0){
+        ::close(out_fd);
+        out_fd = -1;
     }
+    out = nullptr;
     MUTEX_UNLOCK(&M);
 }
 
@@ -728,4 +704,3 @@ void dfxml_writer::add_DFXML_build_environment()
 #endif
     pop();
 }
-

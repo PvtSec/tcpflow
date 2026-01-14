@@ -6,6 +6,11 @@
 
 #ifndef HAVE_PCAP_WRITER_H
 #define HAVE_PCAP_WRITER_H
+#include "be13_api/safe_open.h"
+
+#ifndef O_BINARY
+#define O_BINARY 0
+#endif
 class pcap_writer {
     /* These are not implemented */
     pcap_writer &operator=(const pcap_writer &that);
@@ -34,8 +39,13 @@ class pcap_writer {
         if (count != 4) throw new write_error();
     }
     void open(const std::string &fname) {
-        fcap = fopen(fname.c_str(),"wb"); // write the output
-        if(fcap==0) throw new write_error();
+        int fd = be13::open_no_symlink(fname.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0666);
+        if(fd < 0) throw new write_error();
+        fcap = fdopen(fd,"wb");
+        if(fcap==0){
+            close(fd);
+            throw new write_error();
+        }
     }
     void write_header(const int pcap_dlt){
         write4(0xa1b2c3d4);

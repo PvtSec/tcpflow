@@ -22,6 +22,7 @@
 /* c++ */
 #include <fstream>
 #include <map>
+#include <memory>
 #include <set>
 #include <sstream>
 #include <stack>
@@ -63,6 +64,7 @@
 
 #ifdef __cplusplus
 #include "cppmutex.h"
+#include "safe_open.h"
 class dfxml_writer {
 private:
     /*** neither copying nor assignment is implemented ***
@@ -82,8 +84,9 @@ private:
 #else
     int M;                              // placeholder
 #endif
-    std::fstream outf;
-    std::ostream *out;                  // where it is being written; defaulst to stdout
+    int out_fd;                         // fd if writing to a file; -1 if writing to stdout
+    std::unique_ptr<be13::fdostream> out_stream;
+    std::ostream *out;                  // where it is being written; defaults to stdout
     stringset tags;                     // XML tags
     std::stack<std::string>tag_stack;
     std::string  tempfilename;
@@ -134,7 +137,7 @@ public:
 
     void close();                       // writes the output to the file
 
-    void flush(){outf.flush();}
+    void flush(){ if(out) out->flush(); }
     void tagout( const std::string &tag,const std::string &attribute);
     void push(const std::string &tag,const std::string &attribute);
     void push(const std::string &tag) {push(tag,"");}

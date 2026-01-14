@@ -39,6 +39,7 @@
 #include <set>
 #include <map>
 #include <cassert>
+#include <memory>
 #include <pthread.h>
 
 #ifdef HAVE_SQLITE3_H
@@ -58,6 +59,7 @@
 #include "cppmutex.h"
 #include "dfxml/src/dfxml_writer.h"
 #include "dfxml/src/hash_t.h"
+#include "safe_open.h"
 #include "atomic_set_map.h"
 #include "beregex.h"
 
@@ -214,7 +216,8 @@ public:
 
 private:
     std::string  ignore_encoding;            // encoding to ignore for carving
-    std::fstream ios;                        // where features are written 
+    int ios_fd;                              // fd where features are written
+    std::unique_ptr<be13::fdostream> ios;    // stream wrapper for ios_fd
     
     class besql_stmt *bs;                    // prepared beapi sql statement
 

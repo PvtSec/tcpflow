@@ -14,6 +14,7 @@
 #include "tcpflow.h"
 #include "tcpip.h"
 #include "tcpdemux.h"
+#include "be13_api/safe_open.h"
 
 #include <iostream>
 #include <sstream>
@@ -123,7 +124,7 @@ int tcpdemux::retrying_open(const std::string &filename,int oflag,int mask)
     while(true){
     //Packet index file reduces max_fds by 1/2 as the index files also take a fd
 	if(open_flows.size() >= (opt.output_packet_index ?  max_fds/2 : max_fds)) close_oldest_fd();
-	int fd = ::open(filename.c_str(),oflag,mask);
+	int fd = be13::open_no_symlink(filename.c_str(),oflag,mask);
 	DEBUG(2)("retrying_open ::open(fn=%s,oflag=x%x,mask:x%x)=%d",filename.c_str(),oflag,mask,fd);
 	if(fd>=0){
             /* Open was successful */

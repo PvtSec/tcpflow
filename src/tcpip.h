@@ -311,7 +311,7 @@ public:;
 
     /* Flow Index information - only used if flow packet/data indexing is requested --GDD */
     std::string flow_index_pathname;	// Path for the flow index file
-    std::fstream		idx_file;				// File descriptor for storing the flow index data
+    int idx_fd;                         // File descriptor for storing the flow index data
 
     /* Stats */
     recon_set   *seen;                  // what we've seen; it must be * due to boost lossage
@@ -332,9 +332,6 @@ public:;
     uint32_t seen_bytes();
     void dump_seen();
     void dump_xml(class dfxml_writer *xmlreport,const std::string &xmladd);
-    static bool compare(std::string a, std::string b);
-    void sort_index(std::fstream *idx_file);
-    void sort_index();
 };
 
 /* print a tcpip data structure. Largely for debugging */

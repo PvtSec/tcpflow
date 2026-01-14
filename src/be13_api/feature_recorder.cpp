@@ -8,6 +8,8 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <string.h>
+#include "safe_open.h"
 
 #ifdef HAVE_STDARG_H
 #include <stdarg.h>
@@ -51,7 +53,7 @@ uint32_t feature_recorder::debug=0;
 feature_recorder::feature_recorder(class feature_recorder_set &fs_,
                                    const std::string &name_):
     flags(0),
-    name(name_),ignore_encoding(),ios(),bs(),
+    name(name_),ignore_encoding(),ios_fd(-1),ios(),bs(),
     histogram_defs(),
     fs(fs_),
     count_(0),context_window_before(context_window_default),context_window_after(context_window_default),
@@ -68,9 +70,7 @@ feature_recorder::feature_recorder(class feature_recorder_set &fs_,
  */
 feature_recorder::~feature_recorder()
 {
-    if(ios.is_open()){
-        ios.close();
-    }
+    close();
 }
 
 void feature_recorder::banner_stamp(std::ostream &os,const std::string &header) const
@@ -140,47 +140,87 @@ void feature_recorder::open()
 
     /* Write to a file? Open the file and seek to the last line if it exist, otherwise just open database */
     if (fs.flag_notset(feature_recorder_set::DISABLE_FILE_RECORDERS)){
-        /* Open the file recorder */
-        std::string fname = fname_counter("");
-        ios.open(fname.c_str(),std::ios_base::in|std::ios_base::out|std::ios_base::ate);
-        if(ios.is_open()){                  // opened existing stream
-            ios.seekg(0L,std::ios_base::end);
-            while(ios.is_open()){
-                /* Get current position */
-                if(int(ios.tellg())==0){            // at beginning of file; stamp and return
-                    ios.seekp(0L,std::ios_base::beg);    // be sure we are at the beginning of the file
-                    return;
-                }
-                ios.seekg(-1,std::ios_base::cur); // backup to once less than the end of the file
-                if (ios.peek()=='\n'){           // we are finally on the \n
-                    ios.seekg(1L,std::ios_base::cur); // move the getting one forward
-                    ios.seekp(ios.tellg(),std::ios_base::beg); // put the putter at the getter location
-                    count_ = 1;                            // greater than zero
-                    return;
-                }
-            }
+        if(ios){
+            return; // already open
         }
-        // Just open the stream for output
-        ios.open(fname.c_str(),std::ios_base::out);
-        if(!ios.is_open()){
+
+        /* Open the file recorder without following symlinks. If the file exists and the
+         * last line is incomplete, truncate back to the last newline (matches legacy behavior). */
+        const std::string fname = fname_counter("");
+        ios_fd = be13::open_no_symlink(fname.c_str(), O_RDWR | O_CREAT | O_BINARY, 0666);
+        if(ios_fd < 0){
             std::cerr << "*** feature_recorder::open CANNOT OPEN FEATURE FILE FOR WRITING "
                       << fname << ":" << strerror(errno) << "\n";
             exit(1);
         }
+
+        struct stat st;
+        memset(&st,0,sizeof(st));
+        if(fstat(ios_fd,&st)==0 && st.st_size>0){
+            constexpr size_t BUF_SIZE = 4096;
+            char buf[BUF_SIZE];
+
+            off_t file_size = st.st_size;
+            off_t scan_pos = file_size;
+            off_t last_nl = -1;
+
+            while(scan_pos>0 && last_nl<0){
+                const size_t chunk = (scan_pos >= (off_t)BUF_SIZE) ? BUF_SIZE : (size_t)scan_pos;
+                scan_pos -= (off_t)chunk;
+
+                if(lseek(ios_fd,scan_pos,SEEK_SET) < 0){
+                    break;
+                }
+                ssize_t r = read(ios_fd,buf,chunk);
+                if(r<=0){
+                    break;
+                }
+                for(ssize_t i=r-1;i>=0;i--){
+                    if(buf[i]=='\n'){
+                        last_nl = scan_pos + i;
+                        break;
+                    }
+                }
+            }
+
+            off_t new_size = (last_nl>=0) ? (last_nl+1) : 0;
+            if(ftruncate(ios_fd,new_size)!=0){
+                std::cerr << "*** feature_recorder::open CANNOT TRUNCATE FEATURE FILE "
+                          << fname << ":" << strerror(errno) << "\n";
+                ::close(ios_fd);
+                ios_fd = -1;
+                exit(1);
+            }
+            if(new_size>0){
+                count_ = 1; // file already has a header
+            }
+            lseek(ios_fd,0,SEEK_END);
+        } else {
+            lseek(ios_fd,0,SEEK_END);
+        }
+
+        ios.reset(new be13::fdostream(ios_fd));
     }
 }
 
 void feature_recorder::close()
 {
-    if(ios.is_open()){
-        ios.close();
+    if(ios){
+        ios->flush();
+        ios.reset();
+    }
+    if(ios_fd>=0){
+        ::close(ios_fd);
+        ios_fd = -1;
     }
 }
 
 void feature_recorder::flush()
 {
     cppmutex::lock lock(Mf);            // get the lock; released when object is deallocated.
-    ios.flush();
+    if(ios){
+        ios->flush();
+    }
 }
 
 
@@ -404,12 +444,12 @@ void feature_recorder::dump_histogram_file(const histogram_def &def,void *user,f
         real_suffix << def.suffix;
         if(histogram_counter>0) real_suffix << histogram_counter;
         std::string ofname = fname_counter(real_suffix.str()); // histogram name
-        std::ofstream o;
-        o.open(ofname.c_str());         // open the file
-        if(!o.is_open()){
-            std::cerr << "Cannot open histogram output file: " << ofname << "\n";
+        int ofd = be13::open_no_symlink(ofname.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0666);
+        if(ofd < 0){
+            std::cerr << "Cannot open histogram output file: " << ofname << ": " << strerror(errno) << "\n";
             return;
         }
+        be13::fdostream o(ofd);
 
         HistogramMaker::FrequencyReportVector *fr = h.makeReport();
         if(fr->size()>0){
@@ -421,7 +461,8 @@ void feature_recorder::dump_histogram_file(const histogram_def &def,void *user,f
             delete fr->at(i);
         }
         delete fr;
-        o.close();
+        o.flush();
+        ::close(ofd);
 
         if(f.is_open()==false){
             return;     // input file was closed
@@ -520,15 +561,15 @@ void feature_recorder::write(const std::string &str)
     }
 
     cppmutex::lock lock(Mf);
-    if(ios.is_open()){
+    if(ios){
         if(count_==0){
-            banner_stamp(ios,feature_file_header);
+            banner_stamp(*ios,feature_file_header);
         }
 
-        ios << str << '\n';
-        if(ios.fail()){
+        (*ios) << str << '\n';
+        if(ios->fail()){
             std::cerr << "DISK FULL\n";
-            ios.close();
+            close();
         }
         count_++;
     }
@@ -666,9 +707,12 @@ void feature_recorder::write(const pos0_t &pos0,const std::string &feature_,cons
        && fs.alert_list->check_feature_context(*feature_utf8,context)){
         std::string alert_fn = fs.get_outdir() + "/ALERTS_found.txt";
         cppmutex::lock lock(Mr);                // notice we are locking the alert list
-        std::ofstream rf(alert_fn.c_str(),std::ios_base::app);
-        if(rf.is_open()){
+        int afd = be13::open_no_symlink(alert_fn.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_BINARY, 0666);
+        if(afd>=0){
+            be13::fdostream rf(afd);
             rf << pos0.shift(feature_recorder::offset_add).str() << '\t' << feature << '\t' << "\n";
+            rf.flush();
+            ::close(afd);
         }
     }
 
@@ -911,7 +955,7 @@ std::string feature_recorder::carve(const sbuf_t &sbuf,size_t pos,size_t len,
     }
 
     /* Write the file into the directory */
-    int fd = ::open(fname.c_str(),O_CREAT|O_BINARY|O_RDWR,0666);
+    int fd = be13::open_no_symlink(fname.c_str(),O_CREAT|O_BINARY|O_RDWR,0666);
     if(fd<0){
         std::cerr << "*** carve: Cannot create " << fname << ": " << strerror(errno) << "\n";
         return std::string();
@@ -944,4 +988,3 @@ void feature_recorder::set_carve_mtime(const std::string &fname, const std::stri
     }
 #endif
 }
-
