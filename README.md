@@ -1,4 +1,4 @@
-TCPFLOW 1.5.0
+TCPFLOW 1.6.2
 =============
 Downloads directory: http://digitalcorpora.org/downloads/tcpflow/
 
@@ -39,7 +39,7 @@ Once you have configured your OS, compile and install with:
 
 If you want do download the development tree with git, be sure to do a *complete* checkout with `--recursive` and then run `bootstrap.sh`, `configure` and `make`:
 
-    git clone --recursive https://github.com/simsong/tcpflow.git
+    git clone --recursive https://github.com/pvtsec/tcpflow.git
     cd tcpflow
     bash bootstrap.sh
     ./configure
@@ -51,7 +51,7 @@ To download and compile for Amazon AMI:
 
     ssh ec2-user@<your ec2 instance>
     sudo bash yum -y install git make gcc-c++ automake autoconf boost-devel cairo-devel libpcap-devel openssl-devel zlib-devel
-    git clone --recursive https://github.com/simsong/tcpflow.git
+    git clone --recursive https://github.com/pvtsec/tcpflow.git
     sh bootstrap.sh
 
 
@@ -203,7 +203,7 @@ reassembling program. He found tcpflow and took over its maintenance.
 Bugs
 ----
 
-Please enter bugs on the [github issue tracker](https://github.com/simsong/tcpflow/issues?state=open)
+Please enter bugs on the [github issue tracker](https://github.com/pvtsec/tcpflow/issues?state=open)
 
 tcpflow currently does not understand IP fragments.  Flows containing
 IP fragments will not be recorded correctly. IP fragmentation is
@@ -234,6 +234,4 @@ Thanks to:
 * Jeffrey Pang, for the radiotap implementation
 * Doug Madory, for the  Wifi parser
 * Jeremy Elson, for the original idea and initial tcp/ip implementation
-
-
-
+* 
